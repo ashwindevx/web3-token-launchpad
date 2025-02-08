@@ -9,29 +9,44 @@ import {
   ExtensionType,
   createInitializeMetadataPointerInstruction,
   createInitializeMintInstruction,
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  createMintToInstruction,
 } from "@solana/spl-token";
 import { createInitializeInstruction, pack } from "@solana/spl-token-metadata";
 
 const TokenLaunchpad = () => {
-  const [name, setName] = useState("Avi");
-  const [symbol, setSymbol] = useState("AVI");
-  const [image, setImage] = useState(
-    "https://images.unsplash.com/photo-1625750331870-624de6fd3452?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
-  );
-  const [supply, setSupply] = useState("100");
+  const [name, setName] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [image, setImage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const { connection } = useConnection();
-  const { publicKey, signTransaction } = useWallet();
+  const { publicKey } = useWallet();
+  const wallet = useWallet();
 
   const createToken = async () => {
+    if (!publicKey) {
+      alert("Please connect your wallet!");
+      return;
+    }
+
+    setIsLoading(true);
     try {
       const mintKeyPair = Keypair.generate();
+      const associatedToken = getAssociatedTokenAddressSync(
+        mintKeyPair.publicKey,
+        publicKey,
+        false,
+        TOKEN_2022_PROGRAM_ID
+      );
 
       const metadata = {
-        mint: mintKeyPair.publicKey,
-        name: name,
-        symbol: symbol,
+        name,
+        symbol,
         uri: image,
+        updateAuthority: publicKey,
+        mint: mintKeyPair.publicKey,
         additionalMetadata: [],
       };
 
@@ -41,7 +56,8 @@ const TokenLaunchpad = () => {
         mintLen + metadataLen
       );
 
-      const transaction = new Transaction().add(
+      // Create and initialize mint
+      const createMintTx = new Transaction().add(
         SystemProgram.createAccount({
           fromPubkey: publicKey,
           newAccountPubkey: mintKeyPair.publicKey,
@@ -68,30 +84,56 @@ const TokenLaunchpad = () => {
           metadata: mintKeyPair.publicKey,
           name: metadata.name,
           symbol: metadata.symbol,
-          uri: metadata.image,
+          uri: metadata.uri,
           mintAuthority: publicKey,
           updateAuthority: publicKey,
         })
       );
 
-      transaction.feePayer = publicKey;
-      transaction.recentBlockhash = (
-        await connection.getLatestBlockhash()
-      ).blockhash;
-      transaction.partialSign(mintKeyPair);
+      const latestBlockhash = await connection.getLatestBlockhash();
+      createMintTx.feePayer = publicKey;
+      createMintTx.recentBlockhash = latestBlockhash.blockhash;
+      createMintTx.partialSign(mintKeyPair);
 
-      const signedTransaction = await signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(
-        signedTransaction.serialize()
+      await wallet.sendTransaction(createMintTx, connection);
+
+      // Create associated token account and mint tokens
+      const setupTokenTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(
+          publicKey,
+          associatedToken,
+          publicKey,
+          mintKeyPair.publicKey,
+          TOKEN_2022_PROGRAM_ID
+        ),
+        createMintToInstruction(
+          mintKeyPair.publicKey,
+          associatedToken,
+          publicKey,
+          1000000000,
+          [],
+          TOKEN_2022_PROGRAM_ID
+        )
       );
 
-      await connection.confirmTransaction(signature, "confirmed");
+      setupTokenTx.feePayer = publicKey;
+      setupTokenTx.recentBlockhash = (
+        await connection.getLatestBlockhash()
+      ).blockhash;
 
-      console.log(`Token mint created at ${mintKeyPair.publicKey.toBase58()}`);
-      alert(`Token mint created at ${mintKeyPair.publicKey.toBase58()}`);
+      wallet.sendTransaction(setupTokenTx, connection);
+
+      console.log(
+        `Token created successfully! Mint: ${mintKeyPair.publicKey.toBase58()}`
+      );
+      alert(
+        `Token created successfully! Mint: ${mintKeyPair.publicKey.toBase58()}`
+      );
     } catch (error) {
       console.error("Error creating token:", error);
-      alert("Error creating token. Check the console for more details.");
+      alert(`Error creating token: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -120,16 +162,13 @@ const TokenLaunchpad = () => {
           value={image}
           onChange={(e) => setImage(e.target.value)}
         />
-        <input
-          className="inputText"
-          type="text"
-          placeholder="Initial Supply"
-          value={supply}
-          onChange={(e) => setSupply(e.target.value)}
-        />
 
-        <button onClick={createToken} className="btn">
-          Create a token
+        <button
+          onClick={createToken}
+          className="btn"
+          disabled={isLoading || !publicKey}
+        >
+          {isLoading ? "Creating..." : "Create Token"}
         </button>
       </div>
     </>
