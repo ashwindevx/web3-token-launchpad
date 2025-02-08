@@ -4,6 +4,7 @@ import {
   WalletMultiButton,
 } from "@solana/wallet-adapter-react-ui";
 import SendSol from "./SendSol";
+import TokenLaunchpad from "./TokenLaunchpad";
 
 const WalletContent = () => {
   const { connected } = useWallet();
@@ -20,7 +21,16 @@ const WalletContent = () => {
         <WalletMultiButton />
         <WalletDisconnectButton />
       </div>
-      <div style={{ margin: "12px" }}>{connected && <SendSol />}</div>
+      <div style={{ margin: "12px" }}>
+        {connected ? (
+          <>
+            <SendSol />
+            <TokenLaunchpad />
+          </>
+        ) : (
+          <p>Please connect your wallet to use the application.</p>
+        )}
+      </div>
     </>
   );
 };
